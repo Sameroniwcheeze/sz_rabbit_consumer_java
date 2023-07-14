@@ -1,5 +1,12 @@
 package com.senzing.g2.consumer;
 
+import javax.json.*;
+import static java.util.Collections.*;
+import static javax.json.stream.JsonGenerator.PRETTY_PRINTING;
+
+import java.io.StringReader;
+import java.io.StringWriter;
+
 public class JsonUtil {
     private static final JsonWriterFactory PRETTY_FACTORY
         = Json.createWriterFactory(singletonMap(PRETTY_PRINTING, true));
