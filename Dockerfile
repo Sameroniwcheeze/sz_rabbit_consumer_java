@@ -18,7 +18,7 @@ USER root
 
 ENV PATH = ${PATH}:/apache-maven-${MAVEN_VERSION}/bin
 
-COPY g2redoer /build
+COPY consumer /build
 WORKDIR /build
 
 RUN apt-get update \
@@ -37,4 +37,3 @@ RUN apt-get update \
 
 WORKDIR /app
 CMD ["java", "-jar", "consumer-1.0.0-SNAPSHOT.jar"]
-
