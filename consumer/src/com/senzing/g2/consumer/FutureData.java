@@ -4,7 +4,7 @@ public class FutureData {
 
    long time;
    String message;
-   boolean ackd;
+   boolean ackd = false;
    long deliveryTag;
    
    public FutureData(String msg){

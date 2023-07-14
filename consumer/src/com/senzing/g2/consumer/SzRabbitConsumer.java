@@ -4,10 +4,7 @@ package com.senzing.g2.consumer;
 import com.senzing.g2.engine.G2JNI;
 import com.senzing.g2.engine.Result;
 
-import com.rabbitmq.client.ConnectionFactory;
-import com.rabbitmq.client.Connection;
-import com.rabbitmq.client.Channel;
-import com.rabbitmq.client.DeliverCallback;
+import com.rabbitmq.client.*;
 
 import java.io.StringReader;
 
@@ -35,7 +32,10 @@ public class SzRabbitConsumer {
         String engineConfig = System.getenv("SENZING_ENGINE_CONFIGURATION_JSON");
 	String queue = System.getenv("SENZING_RABBITMQ_QUEUE");
 	String amqpUrl = System.getenv("SENZING_AMQP_URL");
-	
+	if(queue == null || amqpUrl == null){
+		System.out.println("The environment variables SENZING_RABBITMQ_QUEUE and SENZING_AMQP_URL need to be set");
+		System.exit(-1);
+	}
         if(engineConfig == null){
             System.out.println("The environment variable SENZING_ENGINE_CONFIGURATION_JSON must be set with a proper JSON configuration.");
             System.out.println("Please see https://senzing.zendesk.com/hc/en-us/articles/360038774134-G2Module-Configuration-and-the-Senzing-API");
@@ -71,23 +71,14 @@ public class SzRabbitConsumer {
 		ch = conn.createChannel();
 		ch.queueDeclare(queue, false, false, false, null);
 		ch.basicQos(maxWorkers);
-		DeliverCallback deliverCallback = (consumerTag, delivery) -> {
-				    String msg = new String(delivery.getBody(), StandardCharsets.UTF_8);
-				    FutureData futDat = new FutureData(msg);
-				    futDat.deliveryTag = delivery.getEnvelope().getDeliveryTag();
-		            	    Future<String> putFuture = compService.submit(() -> processMsg(g2, msg, true, futDat));
-		            	    futures.put(putFuture, futDat);
-				};
 				
 		String cTag = "Senzing-rabbit-consumer";
-		ch.basicConsume(queue, false, cTag, deliverCallback, consumerTag -> { });
-		boolean competed = false;
 		while(true){
 			if(!futures.isEmpty()){
 				doneFuture = compService.poll(10, TimeUnit.SECONDS);
 				while(doneFuture!=null){
 					messages++;
-					if(!futures.get(doneFuture).ackd){
+					if(!(futures.get(doneFuture).ackd)){
 						ch.basicAck(futures.get(doneFuture).deliveryTag, false);
 						futures.get(doneFuture).ackd = true;
 					}
@@ -100,7 +91,6 @@ public class SzRabbitConsumer {
 						prevTime = System.currentTimeMillis();
 					}
 				}
-				ch.basicConsume(queue, false, cTag, deliverCallback, consumerTag -> { }); // Bring back the consumer to get more messages
 			}
 			
 			if(System.currentTimeMillis()>(logCheckTime+(LONG_RECORD/2))){
@@ -113,7 +103,7 @@ public class SzRabbitConsumer {
 						String longRecordMsg = longRecordData.message;
 						System.out.printf("This record has been processing for %.2f minutes\n", (System.currentTimeMillis()-time)/(1000.0*60.0));
 						if(2*LONG_RECORD <= System.currentTimeMillis() - time){
-							ch.basicReject(futures.get(doneFuture).deliveryTag, false);
+							ch.basicReject(futures.get(future).deliveryTag, false);
 							futures.get(doneFuture).ackd = true;
 						}
 						System.out.println(longRecordMsg);
@@ -126,16 +116,24 @@ public class SzRabbitConsumer {
 				logCheckTime=System.currentTimeMillis();
 			}
 		        //Add processing the messages to the queue until the amount in the queue is equal to the number of workers.
-		        long start = System.currentTimeMillis();
 		        while(futures.size()<maxWorkers){
-		        	//just wait and not max the CPU
-		        	TimeUnit.MICROSECONDS.sleep(500);
+		        	GetResponse delivery = ch.basicGet(queue, false);
+		        	if(delivery == null){
+		        		TimeUnit.MICROSECONDS.sleep(500);
+
+		        	}
+		        	else{
+					String msg = new String(delivery.getBody(), StandardCharsets.UTF_8);
+					FutureData futDat = new FutureData(msg);
+					futDat.deliveryTag = delivery.getEnvelope().getDeliveryTag();
+			    	        Future<String> putFuture = compService.submit(() -> processMsg(g2, msg, true, futDat));
+			    	        futures.put(putFuture, futDat);
+		        	}
 			}
-			ch.basicCancel(cTag); // Cancel the consumer so that we don't get more messages than we can process
 		}
 	}
 	catch(Exception e){
-	    System.out.println(e);
+		e.printStackTrace(System.out);
 	    System.out.println("Added a total of " + String.valueOf(messages) + " records");
 	    try{
 	    	if(ch!=null){
@@ -154,7 +152,6 @@ public class SzRabbitConsumer {
         int returnCode = 0;
 	JsonObject record = JsonUtil.parseJsonObject(msg);
 	futDat.time = System.currentTimeMillis();
-	futDat.ackd = false;
         if(withInfo){
             StringBuffer response = new StringBuffer();
             returnCode = engine.addRecordWithInfo(record.getString("DATA_SOURCE"), record.getString("RECORD_ID"),
