@@ -30,10 +30,11 @@ public class SzRabbitConsumer {
 
         //Setup info and logging
         String engineConfig = System.getenv("SENZING_ENGINE_CONFIGURATION_JSON");
+        String infoQueue = System.getenv("SENZING_RABBITMQ_INFO_QUEUE");
 	String queue = System.getenv("SENZING_RABBITMQ_QUEUE");
 	String amqpUrl = System.getenv("SENZING_AMQP_URL");
-	if(queue == null || amqpUrl == null){
-		System.out.println("The environment variables SENZING_RABBITMQ_QUEUE and SENZING_AMQP_URL need to be set");
+	if(queue == null || amqpUrl == null || infoQueue == null){
+		System.out.println("Make sure all required environment variables are set.");
 		System.exit(-1);
 	}
         if(engineConfig == null){
@@ -64,11 +65,14 @@ public class SzRabbitConsumer {
 	
 	Connection conn = null;
 	Channel ch = null;
+	Channel infoCh = null;
         try{
         	ConnectionFactory factory = new ConnectionFactory();
 		factory.setUri(amqpUrl);
 		conn = factory.newConnection();
 		ch = conn.createChannel();
+		infoCh = conn.createChannel();
+		infoCh.queueDeclare(infoQueue, false, false, false, null);
 		ch.queueDeclare(queue, false, false, false, null);
 		ch.basicQos(maxWorkers);
 				
@@ -81,6 +85,10 @@ public class SzRabbitConsumer {
 					if(!(futures.get(doneFuture).ackd)){
 						ch.basicAck(futures.get(doneFuture).deliveryTag, false);
 						futures.get(doneFuture).ackd = true;
+					}
+					String info = doneFuture.get();
+					if(info!=null){
+						infoCh.basicPublish("", infoQueue, null, info.getBytes());
 					}
 					futures.remove(doneFuture);
 					doneFuture = compService.poll();
@@ -133,14 +141,17 @@ public class SzRabbitConsumer {
 		}
 	}
 	catch(Exception e){
-		e.printStackTrace(System.out);
+		//e.printStackTrace(System.out);
 	    System.out.println("Added a total of " + String.valueOf(messages) + " records");
 	    try{
-	    	if(ch!=null){
-	    		ch.close();}
+	    	if(ch!=null && infoCh!=null){
+	    		ch.close();
+	    		infoCh.close();
+	    		}
 	    }
 	    catch(Exception ex){
-	    System.out.println(ex);}
+	    //System.out.println(ex);
+	    }
 	    
             executor.shutdown();
             g2.destroy();
